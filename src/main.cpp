@@ -34,7 +34,9 @@ int main(int argc, char* argv[]) {
 
     if (argc >= 2 && std::string(argv[1]) == "--bench") {
         // Benchmark mode: run search on starting position at depth 10
+        std::cerr << "[bench] init" << std::endl;
         Search::tt().resize(1); // 1MB TT for testing
+        std::cerr << "[bench] board" << std::endl;
         Board board;
         Search search;
         SearchParams params;
@@ -47,9 +49,10 @@ int main(int argc, char* argv[]) {
         std::cout << "Benchmark: searching starting position at depth " << params.depth << std::endl;
         std::cout << "Searching..." << std::endl;
 
+        std::cerr << "[bench] starting search" << std::endl;
         auto start = std::chrono::steady_clock::now();
         search.search();
-        std::cout << "Search complete." << std::endl;
+        std::cerr << "[bench] search done" << std::endl;
         auto end = std::chrono::steady_clock::now();
 
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();

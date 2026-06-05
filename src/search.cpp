@@ -150,6 +150,11 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
     // Stop check
     if (ctx.stop.load()) { ctx.ply--; return 0; }
 
+    // Debug: confirm entry into search
+    if (depth >= 8 && old_ply == 0) {
+        std::cerr << "[search] entering depth " << depth << std::endl;
+    }
+
     // Draw detection
     if (ctx.board.is_draw()) { ctx.ply--; return 0; }
 
@@ -500,6 +505,7 @@ void Search::search() {
     for (int depth = 1; depth <= params_.depth; depth++) {
         if (stop_.load()) break;
 
+        std::cerr << "[search] depth=" << depth << " start" << std::endl;
         ctx.current_depth = depth;
         ctx.ply = 0;
         ctx.nodes = 0;
