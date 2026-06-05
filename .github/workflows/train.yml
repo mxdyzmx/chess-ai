@@ -43,12 +43,6 @@ jobs:
           make clean 2>/dev/null || true
           make -j$(nproc)
 
-      - name: Verify baseline
-        run: |
-          echo "=== Baseline ==="
-          ./chessai --bench 2>&1 | tail -5
-          echo "quit" | stockfish | head -1
-
       - name: Run training
         id: train
         run: |
