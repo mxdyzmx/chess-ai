@@ -14,10 +14,12 @@ struct SearchContext {
     std::atomic<bool>& stop;
     int64_t start_time;
     int64_t time_limit;
+    int64_t heartbeat_at;   // next heartbeat timestamp (ms)
     int sel_depth;
     uint64_t nodes;
     uint64_t qnodes;
     int ply;
+    int current_depth;      // current ID depth (for heartbeat output)
     Move pv_table[TT_MAX_PLY * TT_MAX_PLY];
     int pv_length[TT_MAX_PLY];
 };
@@ -316,7 +318,22 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
         }
 
         // Periodic stop check for responsive time management
-        if ((i & 7) == 0 && ctx.stop.load()) break;
+        if ((i & 7) == 0) {
+            if (ctx.stop.load()) break;
+            // Heartbeat: print status every ~60s so CI sees progress
+            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (now_ms >= ctx.heartbeat_at) {
+                ctx.heartbeat_at = now_ms + 60000;
+                int64_t elapsed = now_ms - ctx.start_time;
+                std::cout << "info heartbeat depth " << ctx.current_depth
+                          << " nodes " << ctx.nodes
+                          << " nps " << (elapsed > 0 ? ctx.nodes * 1000 / elapsed : 0)
+                          << " time " << elapsed
+                          << " sel_depth " << ctx.sel_depth
+                          << std::endl;
+            }
+        }
 
         Move m = list.moves[i];
 
@@ -469,7 +486,8 @@ void Search::search() {
     // Setup search context
     SearchContext ctx = {
         root_, stats_, stop_, start_time_, time_limit_,
-        0, 0, 0, 0,
+        start_time_ + 60000,  // first heartbeat at 60s
+        0, 0, 0, 0, 1,
         {}, {}
     };
     memset(ctx.pv_table, 0, sizeof(ctx.pv_table));
@@ -482,6 +500,7 @@ void Search::search() {
     for (int depth = 1; depth <= params_.depth; depth++) {
         if (stop_.load()) break;
 
+        ctx.current_depth = depth;
         ctx.ply = 0;
         ctx.nodes = 0;
         ctx.qnodes = 0;
