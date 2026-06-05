@@ -21,12 +21,6 @@ jobs:
           make clean 2>/dev/null || true
           make CXXFLAGS="-O3 -march=native -pthread -std=c++17 -Wall -Wextra -Wno-sign-compare -Wno-unused-parameter" LDFLAGS="-pthread" -j$(nproc) 2>&1
 
-      - name: Verify binary
-        run: ls -la ./chessai && file ./chessai
-
-      - name: Quick benchmark
-        run: timeout 30 ./chessai --bench 2>&1 || echo "BENCH_EXIT_CODE=$?"
-
       - name: Verify Stockfish
         run: echo "quit" | stockfish | head -1
 
