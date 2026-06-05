@@ -85,6 +85,14 @@ void UCI::loop() {
             std::cout << "Eval: " << evaluate(board_) << std::endl;
         } else if (cmd == "eval") {
             std::cout << "Evaluation: " << evaluate(board_) << " cp" << std::endl;
+        } else if (cmd == "dump_features") {
+            float features[NUM_FEATURES];
+            extract_features(board_, features);
+            for (int i = 0; i < NUM_FEATURES; i++) {
+                std::cout << features[i];
+                if (i < NUM_FEATURES - 1) std::cout << " ";
+            }
+            std::cout << std::endl;
         } else if (cmd == "print_weights") {
             for (int i = 0; i < NUM_FEATURES; i++) {
                 std::cout << eval_weights[i];
