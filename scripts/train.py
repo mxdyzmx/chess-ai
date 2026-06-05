@@ -5,13 +5,13 @@ Plays games vs Stockfish, collects positions+evals, tunes eval weights,
 generates updated default_weights.inc, and validates improvement.
 """
 
-import subprocess, sys, os, math, time, re, threading, queue
+import subprocess, sys, os, math, time, re, threading, queue, shutil
 import numpy as np
 from pathlib import Path
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENGINE = os.path.join(PROJECT, "chessai")
-STOCKFISH = "/usr/local/bin/stockfish"
+STOCKFISH = shutil.which("stockfish") or "/usr/games/stockfish"
 WEIGHTS = os.path.join(PROJECT, "src", "default_weights.inc")
 
 NUM_FEATURES = 391
@@ -169,7 +169,7 @@ def game_result(p, moves):
     return 0.5
 
 
-def play_and_collect(eng_proc, sf_proc, num_games, movetime=50, sf_depth=8):
+def play_and_collect(eng_proc, sf_proc, num_games, movetime=50, sf_depth=8, eval_depth=12):
     """
     Play games collecting (features, sf_eval, result) for each position.
     """
@@ -200,7 +200,7 @@ def play_and_collect(eng_proc, sf_proc, num_games, movetime=50, sf_depth=8):
                 if feats is not None:
                     # Get Stockfish's evaluation of this position
                     set_position(sf_proc, moves)
-                    sf_eval = get_sf_eval(sf_proc)
+                    sf_eval = get_sf_eval(sf_proc, depth=eval_depth)
 
                     # Convert to our perspective
                     if not our_white:
@@ -367,7 +367,7 @@ def main():
 
     # Play and collect
     print(f"\n[3] Playing {args.games} games vs Stockfish (depth={args.sf_depth})...")
-    X, y_sf, y_result = play_and_collect(eng, sf, args.games, args.movetime, args.sf_depth)
+    X, y_sf, y_result = play_and_collect(eng, sf, args.games, args.movetime, args.sf_depth, args.eval_depth)
 
     if len(X) == 0:
         print("ERROR: No data collected!")
@@ -379,7 +379,6 @@ def main():
 
     # Write new weights
     backup_path = WEIGHTS + ".bak"
-    import shutil
     shutil.copy2(WEIGHTS, backup_path)
     write_weights(new_weights)
     print(f"\n[5] Wrote new weights to {WEIGHTS}")
@@ -411,7 +410,7 @@ def main():
     eng2.handshake(5)
 
     X_val, y_val_sf, y_val_res = play_and_collect(eng2, sf2, min(6, args.games // 3),
-                                                   args.movetime, args.sf_depth)
+                                                   args.movetime, args.sf_depth, args.eval_depth)
 
     if len(X_val) > 0:
         # Compute correlation between our eval and Stockfish eval
