@@ -1,0 +1,20 @@
+# Build artifacts
+chessai
+debug_eval
+obj/
+*.o
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Training data (large generated files)
+training/*.npz
+train/__pycache__/
+*.pyc
+
+# Claude Code memory
+.claude/
