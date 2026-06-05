@@ -33,4 +33,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: elo-results
-          path: elo_result.txt
+          path: |
+            elo_result.txt
+            games.pgn

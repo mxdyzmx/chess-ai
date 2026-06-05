@@ -603,6 +603,7 @@ void Search::search() {
             std::cout << p[best_move_.promotion_type() - PT_KNIGHT];
         }
         std::cout << std::endl;
+        std::cout.flush();  // ensure pipe gets the bestmove immediately
     }
 
     searching_.store(false);
