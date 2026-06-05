@@ -1,0 +1,48 @@
+name: Elo Estimate
+
+on:
+  workflow_dispatch:  # manual trigger
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  estimate-elo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Stockfish
+        run: sudo apt-get update && sudo apt-get install -y stockfish
+
+      - name: Build ChessAI
+        run: |
+          make clean 2>/dev/null || true
+          make -j$(nproc)
+
+      - name: Verify build
+        run: |
+          ./chessai --bench 2>&1 | tail -10
+          stockfish --version 2>&1 || stockfish version 2>&1 || true
+
+      - name: Run Elo estimate
+        id: elo
+        run: |
+          python3 scripts/match.py --quick --movetime 20 2>&1 | tee elo_result.txt
+
+      - name: Read and comment Elo result
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+        run: |
+          echo "## 🤖 ChessAI Elo Estimate" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat elo_result.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: elo-results
+          path: elo_result.txt
