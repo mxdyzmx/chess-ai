@@ -45,9 +45,11 @@ int main(int argc, char* argv[]) {
         search.set_params(params);
 
         std::cout << "Benchmark: searching starting position at depth " << params.depth << std::endl;
+        std::cout << "Searching..." << std::endl;
 
         auto start = std::chrono::steady_clock::now();
         search.search();
+        std::cout << "Search complete." << std::endl;
         auto end = std::chrono::steady_clock::now();
 
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();

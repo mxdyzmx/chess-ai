@@ -552,6 +552,13 @@ void Search::search() {
                   << " pv " << pv_str
                   << std::endl;
 
+        // Progress bar
+        std::cout << "progress: [";
+        int bar_pos = depth * 20 / params_.depth;
+        for (int b = 0; b < 20; b++)
+            std::cout << (b < bar_pos ? '#' : '.');
+        std::cout << "] " << depth << "/" << params_.depth << std::endl;
+
         if (time_over()) {
             stop_.store(true);
             break;
