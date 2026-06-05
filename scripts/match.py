@@ -201,9 +201,9 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     if args.quick:
-        # Quick estimate: sweep depths 1,2,3,4 with few games each
+        # Quick estimate: sweep depths 1,2,3 with few games each
         results = []
-        for d, n in [(1, 20), (2, 20), (3, 20), (4, 30)]:
+        for d, n in [(1, 10), (2, 10), (3, 10)]:
             elo = run_match(d, games=n, movetime=args.movetime)
             results.append((d, elo, n))
         total_n = sum(n for _, _, n in results)

@@ -47,7 +47,7 @@ jobs:
         run: |
           echo "=== Baseline ==="
           ./chessai --bench 2>&1 | tail -5
-          stockfish version 2>&1 || true
+          echo "quit" | stockfish | head -1
 
       - name: Run training
         id: train
