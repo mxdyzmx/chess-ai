@@ -147,14 +147,6 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
     // Stop check
     if (ctx.stop.load()) { ctx.ply--; return 0; }
 
-    // Integrity check at node entry
-    int np = popcount(ctx.board.all_pieces());
-    if (np != 32) {
-        std::cerr << "ENTRY_CORRUPT: depth=" << depth << " ply=" << ctx.ply
-                  << " pieces=" << np << " side=" << ctx.board.side()
-                  << " fen=" << ctx.board.fen() << std::endl;
-    }
-
     // Draw detection
     if (ctx.board.is_draw()) { ctx.ply--; return 0; }
 
@@ -264,12 +256,12 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
 
     // Null move pruning
     if (depth >= 3 && !in_check) {
-        ctx.board.toggle_side();
+        ctx.board.make_null_move();
 
         int R = 2 + std::min(depth, 8) / 5;
         int null_score = -alpha_beta_root(ctx, -beta, -beta + 1, depth - R - 1);
 
-        ctx.board.toggle_side();
+        ctx.board.unmake_null_move();
 
         if (null_score >= beta) {
             ctx.stats.null_cutoffs++;
@@ -281,21 +273,6 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
     // Generate moves
     MoveList list;
     generate_moves(ctx.board, list);
-
-    // Integrity check: verify board has correct number of pieces
-    if (popcount(ctx.board.all_pieces()) != 32) {
-        std::cerr << "CORRUPT: depth=" << depth << " ply=" << ctx.ply
-                  << " pieces=" << popcount(ctx.board.all_pieces())
-                  << " fen=" << ctx.board.fen() << std::endl;
-        // Print first few moves to see what's being tried
-        std::cerr << " moves=" << list.size;
-        for (int mi = 0; mi < std::min(list.size, 4); mi++) {
-            Move cm = list.moves[mi];
-            std::cerr << " [" << cm.from() << "->" << cm.to() << " f=" << cm.flags() << "]";
-        }
-        std::cerr << " TTmove=" << (tt_move.data != 0 ? std::to_string(tt_move.from()) + "->" + std::to_string(tt_move.to()) : "none") << std::endl;
-        std::abort();
-    }
 
     // Checkmate/stalemate
     int legal_moves = 0;
@@ -341,7 +318,6 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
 
         // Make move
         if (!ctx.board.make_move(m)) continue;
-
         // Skip illegal
         if (ctx.board.in_check()) {
             ctx.board.unmake_move();
@@ -483,7 +459,7 @@ void Search::search() {
         time_limit_ = INT64_MAX;
     }
 
-    // Save FEN for board restoration between depths (workaround for corruption)
+    // Save FEN for PV string validation
     std::string saved_fen = root_.fen();
 
     // Setup search context
@@ -514,11 +490,6 @@ void Search::search() {
         beta  = TT_MATE_SCORE;
 
         int score = alpha_beta_root(ctx, alpha, beta, depth);
-
-        // HACK: restore board if corrupted by search (leaves pieces missing)
-        if (depth > 1 && popcount(ctx.board.all_pieces()) != 32) {
-            root_.set_fen(saved_fen);
-        }
 
         // Aspiration fail-low: re-search with full window
         if (score <= alpha || score >= beta) {

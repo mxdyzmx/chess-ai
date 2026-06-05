@@ -320,7 +320,7 @@ void generate_moves(const Board& board, MoveList& list) {
             list.add(Move::make(from, to, 1));
         }
         // Captures
-        uint64_t cap = (pawns << 7) & ~FILE_A_BB & their_pieces;
+        uint64_t cap = ((pawns & ~FILE_A_BB) << 7) & their_pieces;
         while (cap) {
             int to = lsb(cap);
             cap &= cap - 1;
@@ -334,7 +334,7 @@ void generate_moves(const Board& board, MoveList& list) {
                 list.add(Move::make(from, to, 4));
             }
         }
-        cap = (pawns << 9) & ~FILE_H_BB & their_pieces;
+        cap = ((pawns & ~FILE_H_BB) << 9) & their_pieces;
         while (cap) {
             int to = lsb(cap);
             cap &= cap - 1;
@@ -388,7 +388,7 @@ void generate_moves(const Board& board, MoveList& list) {
             list.add(Move::make(from, to, 1));
         }
         // Captures
-        uint64_t cap = (pawns >> 7) & ~FILE_H_BB & their_pieces;
+        uint64_t cap = ((pawns & ~FILE_H_BB) >> 7) & their_pieces;
         while (cap) {
             int to = lsb(cap);
             cap &= cap - 1;
@@ -402,7 +402,7 @@ void generate_moves(const Board& board, MoveList& list) {
                 list.add(Move::make(from, to, 4));
             }
         }
-        cap = (pawns >> 9) & ~FILE_A_BB & their_pieces;
+        cap = ((pawns & ~FILE_A_BB) >> 9) & their_pieces;
         while (cap) {
             int to = lsb(cap);
             cap &= cap - 1;
@@ -503,7 +503,7 @@ void generate_moves(const Board& board, MoveList& list) {
         if (us == WHITE) {
             // Kingside
             if ((board.castling_rights() & CASTLE_WHITE_KING) &&
-                !(occ & sq_bb(5) & sq_bb(6)) &&
+                !(occ & (sq_bb(5) | sq_bb(6))) &&
                 !is_attacked(board, 4, BLACK) &&
                 !is_attacked(board, 5, BLACK) &&
                 !is_attacked(board, 6, BLACK)) {
@@ -511,7 +511,7 @@ void generate_moves(const Board& board, MoveList& list) {
             }
             // Queenside
             if ((board.castling_rights() & CASTLE_WHITE_QUEEN) &&
-                !(occ & sq_bb(1) & sq_bb(2) & sq_bb(3)) &&
+                !(occ & (sq_bb(1) | sq_bb(2) | sq_bb(3))) &&
                 !is_attacked(board, 4, BLACK) &&
                 !is_attacked(board, 3, BLACK) &&
                 !is_attacked(board, 2, BLACK)) {
@@ -520,7 +520,7 @@ void generate_moves(const Board& board, MoveList& list) {
         } else {
             // Kingside
             if ((board.castling_rights() & CASTLE_BLACK_KING) &&
-                !(occ & sq_bb(61) & sq_bb(62)) &&
+                !(occ & (sq_bb(61) | sq_bb(62))) &&
                 !is_attacked(board, 60, WHITE) &&
                 !is_attacked(board, 61, WHITE) &&
                 !is_attacked(board, 62, WHITE)) {
@@ -528,7 +528,7 @@ void generate_moves(const Board& board, MoveList& list) {
             }
             // Queenside
             if ((board.castling_rights() & CASTLE_BLACK_QUEEN) &&
-                !(occ & sq_bb(57) & sq_bb(58) & sq_bb(59)) &&
+                !(occ & (sq_bb(57) | sq_bb(58) | sq_bb(59))) &&
                 !is_attacked(board, 60, WHITE) &&
                 !is_attacked(board, 59, WHITE) &&
                 !is_attacked(board, 58, WHITE)) {
@@ -551,7 +551,7 @@ void generate_captures(const Board& board, MoveList& list) {
     // Pawn captures
     uint64_t pawns = board.pawns(us);
     if (us == WHITE) {
-        uint64_t cap = (pawns << 7) & ~FILE_A_BB & their_pieces;
+        uint64_t cap = ((pawns & ~FILE_A_BB) << 7) & their_pieces;
         while (cap) {
             int to = lsb(cap); cap &= cap - 1;
             int from = to - 7;
@@ -562,7 +562,7 @@ void generate_captures(const Board& board, MoveList& list) {
                 list.add(Move::make(from, to, 4));
             }
         }
-        cap = (pawns << 9) & ~FILE_H_BB & their_pieces;
+        cap = ((pawns & ~FILE_H_BB) << 9) & their_pieces;
         while (cap) {
             int to = lsb(cap); cap &= cap - 1;
             int from = to - 9;
@@ -579,7 +579,7 @@ void generate_captures(const Board& board, MoveList& list) {
             if (pawns & sq_bb(ep_sq - 9)) list.add(Move::make(ep_sq - 9, ep_sq, 5));
         }
     } else {
-        uint64_t cap = (pawns >> 7) & ~FILE_H_BB & their_pieces;
+        uint64_t cap = ((pawns & ~FILE_H_BB) >> 7) & their_pieces;
         while (cap) {
             int to = lsb(cap); cap &= cap - 1;
             int from = to + 7;
@@ -590,7 +590,7 @@ void generate_captures(const Board& board, MoveList& list) {
                 list.add(Move::make(from, to, 4));
             }
         }
-        cap = (pawns >> 9) & ~FILE_A_BB & their_pieces;
+        cap = ((pawns & ~FILE_A_BB) >> 9) & their_pieces;
         while (cap) {
             int to = lsb(cap); cap &= cap - 1;
             int from = to + 9;

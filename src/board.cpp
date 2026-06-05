@@ -473,6 +473,22 @@ void Board::unmake_move() {
     game_ply_--;
 }
 
+void Board::make_null_move() {
+    // Clear EP square — it's only valid for one turn
+    if (ep_sq_ >= 0) {
+        hash_ ^= zobrist_ep_[ep_sq_];
+        ep_sq_ = -1;
+    }
+    side_ = Color(1 - side_);
+    hash_ ^= zobrist_side_;
+}
+
+void Board::unmake_null_move() {
+    side_ = Color(1 - side_);
+    hash_ ^= zobrist_side_;
+    // EP stays cleared — the null move skipped the other side's turn
+}
+
 bool is_attacked(const Board& board, int sq, Color attacker) {
     uint64_t occ = board.all_pieces();
 
@@ -510,4 +526,67 @@ bool is_legal_move(const Board& board, Move move) {
     return true;
 }
 
+bool Board::verify_integrity(std::string* out) const {
+    // Check cross-color double occupancy
+    uint64_t total_occ = by_color_[0] | by_color_[1];
+    uint64_t cross = by_color_[0] & by_color_[1];
+    if (cross && out) {
+        *out += " cross_color_sq=" + std::to_string(lsb(cross));
+    }
+
+    // Count pieces per side from bitboards directly (not by_color_)
+    int piece_count[2] = {0, 0};
+    for (int pt = 0; pt < 6; pt++) {
+        piece_count[0] += popcount(bitboards_[pt][0]);
+        piece_count[1] += popcount(bitboards_[pt][1]);
+    }
+    if (piece_count[0] + piece_count[1] != popcount(total_occ) && out) {
+        *out += " piece_vs_occ=" + std::to_string(piece_count[0] + piece_count[1])
+                + "vs" + std::to_string(popcount(total_occ));
+    }
+
+    // Check that by_color_ matches sum of piece bitboards
+    uint64_t expected_by_color[2] = {0, 0};
+    for (int pt = 0; pt < 6; pt++) {
+        expected_by_color[0] |= bitboards_[pt][0];
+        expected_by_color[1] |= bitboards_[pt][1];
+    }
+    bool ok = true;
+    for (int c = 0; c < 2; c++) {
+        uint64_t diff = expected_by_color[c] ^ by_color_[c];
+        if (diff) {
+            if (out) {
+                *out += " byc_" + std::to_string(c) + "_diff_sq=" + std::to_string(lsb(diff));
+            }
+            ok = false;
+        }
+    }
+
+    // Check hash
+    uint64_t expected_hash = 0;
+    for (int pt = 0; pt < 6; pt++) {
+        for (int c = 0; c < 2; c++) {
+            uint64_t bb = bitboards_[pt][c];
+            while (bb) {
+                int sq = lsb(bb);
+                bb &= bb - 1;
+                expected_hash ^= zobrist_piece_[pt][c][sq];
+            }
+        }
+    }
+    expected_hash ^= zobrist_castle_[castle_];
+    if (ep_sq_ >= 0) expected_hash ^= zobrist_ep_[ep_sq_];
+    if (side_ == BLACK) expected_hash ^= zobrist_side_;
+
+    if (expected_hash != hash_) {
+        if (out) *out += " hash_mismatch";
+        ok = false;
+    }
+    if (out) {
+        *out += " w=" + std::to_string(piece_count[0]) + " b=" + std::to_string(piece_count[1]);
+    }
+    return ok;
+}
+
 } // namespace engine
+

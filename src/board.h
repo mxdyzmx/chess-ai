@@ -96,9 +96,12 @@ public:
     uint64_t hash() const { return hash_; }
     int  game_ply() const { return game_ply_; }
     bool is_white_to_move() const { return side_ == WHITE; }
+    int  debug_stack_size() const { return stack_size_; }
+    bool verify_integrity(std::string* out = nullptr) const;
 
-    // Null move support
-    void toggle_side() { side_ = Color(1 - side_); hash_ ^= zobrist_side_; }
+    // Null move support — clears EP since it's only valid for one turn
+    void make_null_move();
+    void unmake_null_move();
 
     bool in_check() const;
     bool is_draw() const;
