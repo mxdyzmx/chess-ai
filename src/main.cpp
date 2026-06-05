@@ -33,12 +33,12 @@ int main(int argc, char* argv[]) {
     }
 
     if (argc >= 2 && std::string(argv[1]) == "--bench") {
-        // Benchmark mode: run search on starting position at depth 6
+        // Benchmark mode: run search on starting position at depth 10
         Search::tt().resize(1); // 1MB TT for testing
         Board board;
         Search search;
         SearchParams params;
-        params.depth = 6;
+        params.depth = 10;
         params.movetime = 0;
 
         search.set_position(board);
