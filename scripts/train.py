@@ -5,11 +5,11 @@ Plays games vs Stockfish, collects positions+evals, tunes eval weights,
 generates updated default_weights.inc, and validates improvement.
 """
 
-import subprocess, sys, os, math, select, time, re
+import subprocess, sys, os, math, time, re, threading, queue
 import numpy as np
 from pathlib import Path
 
-PROJECT = os.path.dirname(os.path.dirname(__file__))
+PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENGINE = os.path.join(PROJECT, "chessai")
 STOCKFISH = "/usr/local/bin/stockfish"
 WEIGHTS = os.path.join(PROJECT, "src", "default_weights.inc")
@@ -17,67 +17,86 @@ WEIGHTS = os.path.join(PROJECT, "src", "default_weights.inc")
 NUM_FEATURES = 391
 
 
-def popen(path):
-    p = subprocess.Popen([path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True, bufsize=1)
-    return p
+class Engine:
+    """UCI engine with background stdout reader thread (macOS-safe)."""
 
+    def __init__(self, path):
+        self.proc = subprocess.Popen(
+            [path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1
+        )
+        self._lines = queue.Queue()
+        self._closed = False
+        self._thread = threading.Thread(target=self._reader, daemon=True)
+        self._thread.start()
 
-def send(p, cmd):
-    p.stdin.write(cmd + "\n")
-    p.stdin.flush()
+    def _reader(self):
+        try:
+            for line in self.proc.stdout:
+                self._lines.put(line.rstrip('\n\r'))
+        except ValueError:
+            pass
+        self._closed = True
 
+    def send(self, cmd):
+        self.proc.stdin.write(cmd + "\n")
+        self.proc.stdin.flush()
 
-def read(p, timeout=30):
-    r, _, _ = select.select([p.stdout], [], [], timeout)
-    return p.stdout.readline().strip() if r else None
+    def read(self, timeout=30):
+        try:
+            return self._lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
 
+    def read_all(self, timeout=10):
+        lines = []
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                l = self._lines.get(timeout=0.5)
+                if l:
+                    lines.append(l)
+            except queue.Empty:
+                break
+        return lines
 
-def read_all(p, timeout=10):
-    """Read all available lines until timeout."""
-    lines = []
-    while True:
-        r, _, _ = select.select([p.stdout], [], [], 0.5)
-        if r:
-            l = p.stdout.readline().strip()
-            if l:
-                lines.append(l)
-        else:
-            break
-    return lines
+    def handshake(self, timeout=5):
+        self.send("uci")
+        while True:
+            l = self.read(timeout)
+            if l and "uciok" in l:
+                break
+        self.send("isready")
+        while True:
+            l = self.read(timeout)
+            if l and "readyok" in l:
+                break
 
-
-def handshake(p, timeout=5):
-    send(p, "uci")
-    while True:
-        l = read(p, timeout)
-        if l and "uciok" in l:
-            break
-    send(p, "isready")
-    while True:
-        l = read(p, timeout)
-        if l and "readyok" in l:
-            break
+    def close(self):
+        try:
+            self.send("quit")
+            self.proc.wait(timeout=3)
+        except:
+            self.proc.kill()
 
 
 def set_position(p, moves=None, fen=None):
     if fen:
-        send(p, f"position fen {fen}")
+        p.send(f"position fen {fen}")
     elif moves:
-        send(p, f"position startpos moves {' '.join(moves)}")
+        p.send(f"position startpos moves {' '.join(moves)}")
     else:
-        send(p, "position startpos")
+        p.send("position startpos")
 
 
 def get_features(p, moves=None, fen=None):
     """Get feature vector from our engine for a position."""
     set_position(p, moves, fen)
-    send(p, "dump_features")
+    p.send("dump_features")
     while True:
-        l = read(p, 10)
+        l = p.read(10)
         if l is None:
             return None
-        # Parse space-separated floats
         try:
             vals = [float(x) for x in l.strip().split()]
             if len(vals) == NUM_FEATURES:
@@ -88,10 +107,10 @@ def get_features(p, moves=None, fen=None):
 
 def get_sf_eval(p, depth=14):
     """Get Stockfish evaluation in centipawns (from white's perspective)."""
-    send(p, f"go depth {depth}")
+    p.send(f"go depth {depth}")
     score = 0
     while True:
-        l = read(p, 30)
+        l = p.read(30)
         if l is None:
             break
         if l.startswith("info"):
@@ -114,9 +133,9 @@ def get_bestmove(p, moves=None, fen=None, movetime=10, depth=None):
         cmd += f" depth {depth}"
     else:
         cmd += f" movetime {movetime}"
-    send(p, cmd)
+    p.send(cmd)
     while True:
-        l = read(p, 30)
+        l = p.read(30)
         if l and l.startswith("bestmove"):
             return l.split()[1]
         if l is None:
@@ -126,11 +145,11 @@ def get_bestmove(p, moves=None, fen=None, movetime=10, depth=None):
 def game_result(p, moves):
     """Analyze final position and return score from white's perspective (1/0.5/0)."""
     set_position(p, moves)
-    send(p, "go depth 8")
+    p.send("go depth 8")
     is_mate, mate_val = False, 0
     bm = "(none)"
     while True:
-        l = read(p, 15)
+        l = p.read(15)
         if l is None:
             break
         if l.startswith("info"):
@@ -335,10 +354,10 @@ def main():
 
     # Start both engines
     print("\n[1] Starting engines...")
-    eng = popen(ENGINE)
-    handshake(eng, 5)
-    sf = popen(STOCKFISH)
-    handshake(sf, 5)
+    eng = Engine(ENGINE)
+    eng.handshake(5)
+    sf = Engine(STOCKFISH)
+    sf.handshake(5)
 
     # Build baseline
     print("\n[2] Building baseline evaluation...")
@@ -385,11 +404,11 @@ def main():
 
     # Quick validation match
     print(f"\n[8] Validation match vs Stockfish...")
-    sf2 = popen(STOCKFISH)
-    handshake(sf2, 5)
+    sf2 = Engine(STOCKFISH)
+    sf2.handshake(5)
 
-    eng2 = popen(ENGINE)
-    handshake(eng2, 5)
+    eng2 = Engine(ENGINE)
+    eng2.handshake(5)
 
     X_val, y_val_sf, y_val_res = play_and_collect(eng2, sf2, min(6, args.games // 3),
                                                    args.movetime, args.sf_depth)
@@ -405,11 +424,7 @@ def main():
 
     # Clean up
     for p in [eng, sf, eng2, sf2]:
-        try:
-            send(p, "quit")
-            p.wait(timeout=2)
-        except:
-            p.kill()
+        p.close()
 
     print("\n" + "=" * 60)
     print("Training complete!")
