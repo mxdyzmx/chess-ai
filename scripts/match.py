@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Play matches between ChessAI and Stockfish. Uses depth-limited Stockfish."""
-import subprocess, sys, os, math, select, time, signal
+import subprocess, sys, os, math, select, time, signal, shutil
 
 ENGINE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chessai")
-STOCKFISH = "/usr/local/bin/stockfish"
+STOCKFISH = shutil.which("stockfish") or "/usr/games/stockfish"
 
 # Approximate Stockfish Elo at fixed depths (bullet)
 SF_DEPTH_ELO = {1: 1550, 2: 1800, 3: 1950, 4: 2100, 5: 2200, 6: 2300,
