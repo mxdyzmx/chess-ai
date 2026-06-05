@@ -106,6 +106,7 @@ static int quiescence(SearchContext& ctx, int alpha, int beta) {
 
     // Order captures by MVV-LVA and search
     for (int i = 0; i < list.size; i++) {
+        if (ctx.stop.load()) break;
         // Bubble sort step
         for (int j = i + 1; j < list.size; j++) {
             int vi = ctx.board.piece_type_on(list.moves[i].to());
@@ -313,6 +314,9 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
         if (best_idx != i) {
             Move t = list.moves[i]; list.moves[i] = list.moves[best_idx]; list.moves[best_idx] = t;
         }
+
+        // Periodic stop check for responsive time management
+        if ((i & 7) == 0 && ctx.stop.load()) break;
 
         Move m = list.moves[i];
 
@@ -548,7 +552,10 @@ void Search::search() {
                   << " pv " << pv_str
                   << std::endl;
 
-        if (time_over()) break;
+        if (time_over()) {
+            stop_.store(true);
+            break;
+        }
     }
 
     stats_.total_time_ms = get_time_ms() - start_time_;
