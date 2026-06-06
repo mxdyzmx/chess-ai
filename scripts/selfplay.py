@@ -78,11 +78,10 @@ class Engine:
             self.proc.kill()
 
 
-def get_bestmove_fen(p, fen, movetime=100):
+def get_bestmove_fen(p, fen, movetime=100, retry=True):
     """Send position fen + go, return best move UCI string or None."""
     # Stop any ongoing search and drain ALL stale output
     p.send("stop")
-    # Keep draining until no more output (exhaust all stale lines)
     for _ in range(200):
         l = p.read(0.1)
         if l is None:
@@ -94,6 +93,9 @@ def get_bestmove_fen(p, fen, movetime=100):
         if l and l.startswith("bestmove"):
             return l.split()[1]
         if l is None:
+            # Retry once if first attempt times out (stale output race)
+            if retry:
+                return get_bestmove_fen(p, fen, movetime, retry=False)
             return None
 
 
