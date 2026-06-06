@@ -80,9 +80,13 @@ class Engine:
 
 def get_bestmove_fen(p, fen, movetime=100):
     """Send position fen + go, return best move UCI string or None."""
-    # Stop any ongoing search first
+    # Stop any ongoing search and drain ALL stale output
     p.send("stop")
-    p.drain()
+    # Keep draining until no more output (exhaust all stale lines)
+    for _ in range(200):
+        l = p.read(0.1)
+        if l is None:
+            break
     p.send(f"position fen {fen}")
     p.send(f"go movetime {movetime}")
     while True:
@@ -95,7 +99,11 @@ def get_bestmove_fen(p, fen, movetime=100):
 
 def get_features_fen(p, fen):
     """Get feature vector for a position (by FEN, not move list)."""
-    p.drain()
+    # Drain all stale output to ensure clean response
+    for _ in range(200):
+        l = p.read(0.1)
+        if l is None:
+            break
     p.send(f"position fen {fen}")
     p.send("dump_features")
     while True:
