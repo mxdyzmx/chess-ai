@@ -462,7 +462,7 @@ def main():
     r = subprocess.run(["make", "clean", "-s"], cwd=PROJECT,
                        capture_output=True, text=True, timeout=30)
     r = subprocess.run(["make", "-j4", "-s"], cwd=PROJECT,
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         print("ERROR: Build failed, restoring original weights")
         shutil.copy2(backup_path, WEIGHTS)
