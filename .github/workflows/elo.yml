@@ -13,8 +13,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Stockfish
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq stockfish
+      - name: Install Stockfish and dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq stockfish python3-chess
 
       - name: Build ChessAI
         run: |
