@@ -59,8 +59,8 @@ extern uint64_t between_bb[64][64];
 
 // Pawn attacks
 inline uint64_t pawn_attacks_from(Color c, uint64_t pawns) {
-    return c == WHITE ? ((pawns << 7) & ~0x0101010101010101ULL) | ((pawns << 9) & ~0x8080808080808080ULL)
-                      : ((pawns >> 7) & ~0x8080808080808080ULL) | ((pawns >> 9) & ~0x0101010101010101ULL);
+    return c == WHITE ? ((pawns << 7) & ~0x8080808080808080ULL) | ((pawns << 9) & ~0x0101010101010101ULL)
+                      : ((pawns >> 7) & ~0x0101010101010101ULL) | ((pawns >> 9) & ~0x8080808080808080ULL);
 }
 
 // Generate all pseudo-legal moves
@@ -69,31 +69,52 @@ void generate_moves(const Board& board, MoveList& list);
 // Generate only captures (for quiescence search)
 void generate_captures(const Board& board, MoveList& list);
 
-// Verify move legality (make sure king not left in check)
-bool is_legal_move(const Board& board, Move move);
-
 // Check if a square is attacked by the given side
 bool is_attacked(const Board& board, int sq, Color attacker);
-
-// Static exchange evaluation
-int see(const Board& board, Move move);
 
 // Initialize movegen tables
 void init_movegen();
 
-// Get sliding attacks
+// Get sliding attacks (direct computation - no magic bitboards)
 inline uint64_t bishop_attacks_bb(int sq, uint64_t occ) {
-    occ &= bishop_masks[sq];
-    occ *= bishop_magics[sq];
-    occ >>= bishop_shift[sq];
-    return bishop_attacks[sq][occ];
+    uint64_t attacks = 0;
+    int r = sq >> 3, f = sq & 7;
+    for (int dr = -1; dr <= 1; dr += 2)
+        for (int df = -1; df <= 1; df += 2)
+            for (int i = 1; i < 8; i++) {
+                int nr = r + dr * i, nf = f + df * i;
+                if (nr < 0 || nr > 7 || nf < 0 || nf > 7) break;
+                int nsq = nr * 8 + nf;
+                attacks |= 1ULL << nsq;
+                if (occ & (1ULL << nsq)) break;
+            }
+    return attacks;
 }
 
 inline uint64_t rook_attacks_bb(int sq, uint64_t occ) {
-    occ &= rook_masks[sq];
-    occ *= rook_magics[sq];
-    occ >>= rook_shift[sq];
-    return rook_attacks[sq][occ];
+    uint64_t attacks = 0;
+    int r = sq >> 3, f = sq & 7;
+    for (int nr = r + 1; nr <= 7; nr++) {
+        int nsq = nr * 8 + f;
+        attacks |= 1ULL << nsq;
+        if (occ & (1ULL << nsq)) break;
+    }
+    for (int nr = r - 1; nr >= 0; nr--) {
+        int nsq = nr * 8 + f;
+        attacks |= 1ULL << nsq;
+        if (occ & (1ULL << nsq)) break;
+    }
+    for (int nf = f + 1; nf <= 7; nf++) {
+        int nsq = r * 8 + nf;
+        attacks |= 1ULL << nsq;
+        if (occ & (1ULL << nsq)) break;
+    }
+    for (int nf = f - 1; nf >= 0; nf--) {
+        int nsq = r * 8 + nf;
+        attacks |= 1ULL << nsq;
+        if (occ & (1ULL << nsq)) break;
+    }
+    return attacks;
 }
 
 inline uint64_t queen_attacks_bb(int sq, uint64_t occ) {

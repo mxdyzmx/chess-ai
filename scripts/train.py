@@ -7,6 +7,7 @@ generates updated default_weights.inc, and validates improvement.
 
 import subprocess, sys, os, math, time, re, threading, queue, shutil
 import numpy as np
+import chess
 from pathlib import Path
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +38,16 @@ class Engine:
         except ValueError:
             pass
         self._closed = True
+
+    def drain(self):
+        """Drain all pending stdout/stderr lines (clear stale data between games)."""
+        lines = []
+        while not self._lines.empty():
+            try:
+                self._lines.get_nowait()
+            except queue.Empty:
+                break
+        return lines
 
     def send(self, cmd):
         self.proc.stdin.write(cmd + "\n")
@@ -91,6 +102,7 @@ def set_position(p, moves=None, fen=None):
 
 def get_features(p, moves=None, fen=None):
     """Get feature vector from our engine for a position."""
+    p.drain()
     set_position(p, moves, fen)
     p.send("dump_features")
     while True:
@@ -106,12 +118,19 @@ def get_features(p, moves=None, fen=None):
 
 
 def get_sf_eval(p, depth=14):
-    """Get Stockfish evaluation in centipawns (from white's perspective)."""
+    """Get Stockfish evaluation in centipawns (from white's perspective).
+       Returns None on timeout."""
+    # Stop any ongoing search before starting a new eval
+    p.send("stop")
+    p.drain()
     p.send(f"go depth {depth}")
-    score = 0
+    score = None
     while True:
-        l = p.read(30)
+        l = p.read(60)
         if l is None:
+            # Timeout — stop the search and drain stale bestmove
+            p.send("stop")
+            p.drain()
             break
         if l.startswith("info"):
             parts = l.split()
@@ -127,6 +146,15 @@ def get_sf_eval(p, depth=14):
 
 
 def get_bestmove(p, moves=None, fen=None, movetime=10, depth=None):
+    # Stop any ongoing search and flush stale output
+    p.send("stop")
+    p.drain()
+    # Read any additional lines that arrive within 500ms (e.g. bestmove from stopped search)
+    end = time.time() + 0.5
+    while time.time() < end:
+        l = p.read(0.1)
+        if l is None:
+            break
     set_position(p, moves, fen)
     cmd = "go"
     if depth:
@@ -144,13 +172,18 @@ def get_bestmove(p, moves=None, fen=None, movetime=10, depth=None):
 
 def game_result(p, moves):
     """Analyze final position and return score from white's perspective (1/0.5/0)."""
+    # Stop any ongoing search before starting new analysis
+    p.send("stop")
+    p.drain()
     set_position(p, moves)
     p.send("go depth 8")
     is_mate, mate_val = False, 0
     bm = "(none)"
     while True:
-        l = p.read(15)
+        l = p.read(30)
         if l is None:
+            p.send("stop")
+            p.drain()
             break
         if l.startswith("info"):
             parts = l.split()
@@ -163,9 +196,13 @@ def game_result(p, moves):
     n = len(moves)
     stm = n % 2
     if bm == "(none)":
+        # STM has no legal moves = checkmate or stalemate
         return 0.5 if not is_mate else (1.0 if stm == 1 else 0.0)
     if is_mate:
-        return 1.0 if (stm == 1) == (mate_val > 0) else 0.0
+        # mate_val > 0 means STM delivers mate; mate_val < 0 means opponent does.
+        # stm=0=white, stm=1=black.
+        # White wins: (stm=0 and mate>0) or (stm=1 and mate<0)
+        return 1.0 if (stm == 0) == (mate_val > 0) else 0.0
     return 0.5
 
 
@@ -177,9 +214,14 @@ def play_and_collect(eng_proc, sf_proc, num_games, movetime=50, sf_depth=8, eval
     total_positions = 0
 
     for g in range(num_games):
+        # Drain any stale output from both engines between games
+        eng_proc.drain()
+        sf_proc.drain()
         our_white = (g % 2 == 0)
+        board = chess.Board()
         moves = []
         game_positions = 0
+        illegal_abort = False
 
         for ply in range(200):
             our_turn = our_white == (ply % 2 == 0)
@@ -191,6 +233,28 @@ def play_and_collect(eng_proc, sf_proc, num_games, movetime=50, sf_depth=8, eval
 
             if bm is None or bm == "(none)":
                 break
+
+            # Validate our engine's move against python-chess board
+            if our_turn:
+                try:
+                    m = chess.Move.from_uci(bm)
+                    if m not in board.legal_moves:
+                        print(f"\n    [ILLEGAL] {bm} | {board.fen()}", flush=True)
+                        illegal_abort = True
+                        break
+                except Exception as e:
+                    print(f"\n    [PARSE ERROR] {bm}: {e} | {board.fen()}", flush=True)
+                    illegal_abort = True
+                    break
+
+            # Apply to python-chess board
+            try:
+                board.push_uci(bm)
+            except Exception as e:
+                print(f"\n    [PUSH ERROR] {bm}: {e} | {board.fen()} | our_turn={our_turn}", flush=True)
+                illegal_abort = True
+                break
+
             moves.append(bm)
 
             # Collect position after each full move (both sides played)
@@ -202,6 +266,9 @@ def play_and_collect(eng_proc, sf_proc, num_games, movetime=50, sf_depth=8, eval
                     set_position(sf_proc, moves)
                     sf_eval = get_sf_eval(sf_proc, depth=eval_depth)
 
+                    if sf_eval is None:
+                        continue  # skip if eval timeout
+
                     # Convert to our perspective
                     if not our_white:
                         sf_eval = -sf_eval
@@ -210,18 +277,23 @@ def play_and_collect(eng_proc, sf_proc, num_games, movetime=50, sf_depth=8, eval
                     y_sf.append(sf_eval)
                     game_positions += 1
 
-        # Determine game result
-        result = game_result(sf_proc, moves)
-        # Result from our perspective
-        if not our_white:
-            result = 1.0 - result
+        # Determine game result (skip for illegal games)
+        if illegal_abort:
+            result = 0.0
+            print(f"    Illegal move — game forfeited")
+        else:
+            result = game_result(sf_proc, moves)
+            # Result from our perspective
+            if not our_white:
+                result = 1.0 - result
 
         # Add result to all positions from this game
         for _ in range(game_positions):
             y_result.append(result)
 
         total_positions += game_positions
-        sys.stdout.write(f"\r  Game {g+1}/{num_games}: {game_positions} positions, result={result:.1f}   ")
+        sys.stdout.write(f"\r  Game {g+1}/{num_games}: {game_positions} positions, result={result:.1f}" +
+                         (" ILLEGAL" if illegal_abort else "") + "   ")
         sys.stdout.flush()
 
     print(f"\n  Total: {total_positions} positions from {num_games} games")
@@ -237,28 +309,29 @@ def train_weights(X, y, lr=0.001, epochs=200, reg=0.01):
     n, d = X.shape
     print(f"  Training: {n} samples, {d} features")
 
+    if n < 10:
+        print(f"  WARNING: too few samples ({n}), skipping training")
+        return read_current_weights().astype(np.int32)
+
     # Initialize weights from current values (read from file)
     w = read_current_weights().astype(np.float32)
 
     # Normalize targets to reasonable range (cap extreme values)
     y = np.clip(y, -3000, 3000)
 
-    # Scale features
-    X_binary = np.where(X > 0, 1.0, np.where(X < 0, -1.0, 0.0))
-
     best_w = w.copy()
     best_loss = float('inf')
 
     for epoch in range(epochs):
-        # Forward: predict = X_binary @ w (since features are ±1 or 0)
-        pred = X_binary @ w
+        # Forward: predict = X @ w (features are already ±1/0 for PSQT and floats for the rest)
+        pred = X @ w
         error = pred - y
 
         # MSE loss
         loss = np.mean(error ** 2) + reg * np.mean(w ** 2)
 
         # Gradient
-        grad = (2.0 / n) * (X_binary.T @ error) + 2 * reg * w
+        grad = (2.0 / n) * (X.T @ error) + 2 * reg * w
 
         # Update
         w -= lr * grad
@@ -414,8 +487,7 @@ def main():
 
     if len(X_val) > 0:
         # Compute correlation between our eval and Stockfish eval
-        X_binary = np.where(X_val > 0, 1.0, np.where(X_val < 0, -1.0, 0.0))
-        our_preds = X_binary @ new_weights
+        our_preds = X_val @ new_weights
         corr = np.corrcoef(our_preds, y_val_sf)[0, 1]
         mae = np.mean(np.abs(our_preds - y_val_sf))
         print(f"    Validation correlation: {corr:.3f}")

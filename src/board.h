@@ -106,7 +106,6 @@ public:
     bool in_check() const;
     bool is_draw() const;
     bool is_mated() const;
-    bool is_legal(Move m) const;
 
     // Get piece list for eval
     int num_pieces(PieceType pt, Color c) const;

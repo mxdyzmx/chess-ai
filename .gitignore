@@ -18,3 +18,9 @@ train/__pycache__/
 
 # Claude Code memory
 .claude/
+
+# Generated game data
+*.pgn
+*.bak
+training_log.txt
+elo_result.txt

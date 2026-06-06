@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Play matches between ChessAI and Stockfish. Uses depth-limited Stockfish."""
 import subprocess, sys, os, math, time, shutil, threading, queue
+import chess
 
 ENGINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chessai")
 STOCKFISH = shutil.which("stockfish") or "/usr/games/stockfish"
@@ -57,10 +58,9 @@ class EngineProcess:
         self.send("isready")
         self.wait_for("readyok", 5)
 
-    def get_bestmove(self, moves, movetime=20, depth=None):
-        """Send position + go, return best move string."""
-        fen = "startpos" if not moves else "startpos moves " + " ".join(moves)
-        self.send(f"position {fen}")
+    def get_bestmove(self, fen, movetime=20, depth=None):
+        """Send position fen + go, return best move string."""
+        self.send(f"position fen {fen}")
         cmd = "go"
         if depth:
             cmd += f" depth {depth}"
@@ -83,10 +83,9 @@ class EngineProcess:
             self.proc.kill()
 
 
-def analyze_position(sf, moves):
+def analyze_position(sf, fen):
     """Analyze a position with Stockfish. Returns (cp, is_mate, mate_val, bestmove)."""
-    fen = "startpos" if not moves else "startpos moves " + " ".join(moves)
-    sf.send(f"position {fen}")
+    sf.send(f"position fen {fen}")
     sf.send("go depth 8")
     cp, is_mate, mate_val, bm = 0, False, 0, "(none)"
     while True:
@@ -119,49 +118,78 @@ def format_pgn(moves, result_str):
     return pgn
 
 
-def play_one_game(our, sf, sf_depth, movetime):
-    """Play one game: our engine white, Stockfish black. Returns (score, moves_list)."""
+def play_one_game(our, sf, sf_depth, movetime, our_white=True):
+    """Play one game: our engine vs Stockfish.
+    Uses python-chess to track position; sends FEN to both engines every turn.
+    Returns (score, moves_list, illegal_flag).
+    If our engine plays an illegal move, forfeit immediately (score=0.0, illegal=True)."""
+    board = chess.Board()
+    if not our_white:
+        # Our engine plays black: swap assignment so `our` always gets correct ply
+        white, black = sf, our
+    else:
+        white, black = our, sf
+    engines = {chess.WHITE: white, chess.BLACK: black}
     moves = []
-    for ply in range(200):
-        if ply % 2 == 0:
-            bm = our.get_bestmove(moves, movetime=movetime)
-        else:
-            bm = sf.get_bestmove(moves, movetime=movetime, depth=sf_depth)
 
+    for ply in range(200):
+        fen = board.fen()
+        cur = engines[board.turn]
+        if cur is our:
+            bm = cur.get_bestmove(fen, movetime=movetime)
+        else:
+            bm = cur.get_bestmove(fen, movetime=movetime, depth=sf_depth)
+
+        print(bm)
         if bm is None or bm == "(none)":
             break
+
+        # Validate our engine's move with python-chess
+        if cur is our:
+            try:
+                m = chess.Move.from_uci(bm)
+                if m not in board.legal_moves:
+                    print(f"\n[ILLEGAL] {bm} | FEN: {board.fen()}", flush=True)
+                    return 0.0, moves, True  # illegal move, forfeit
+            except Exception as e:
+                print(f"\n[PARSE ERROR] {bm}: {e} | FEN: {board.fen()}", flush=True)
+                return 0.0, moves, True  # unparseable move, forfeit
+
+        # Apply move to python-chess board
+        try:
+            board.push_uci(bm)
+        except Exception:
+            return 0.0, moves, True
+
         moves.append(bm)
 
     n = len(moves)
-    sf_result = analyze_position(sf, moves)
+    sf_result = analyze_position(sf, board.fen())
     cp, is_mate, mate_val, final_bm = sf_result
 
     # Determine result from our engine's perspective
     if final_bm == "(none)":
-        stm = n % 2  # 0=white to move, 1=black to move
+        stm = n % 2
         if is_mate:
-            # Side to move is checkmated
-            score = 0.0 if stm == 0 else 1.0  # white mated -> we lose, black mated -> we win
+            score = 0.0 if stm == 0 else 1.0
         else:
-            score = 0.5  # stalemate
+            score = 0.5
     elif is_mate:
         stm = n % 2
         if mate_val > 0:
-            # Side to move delivers mate
-            score = 1.0 if stm == 0 else 0.0  # white mates -> we win, black mates -> we lose
+            score = 1.0 if stm == 0 else 0.0
         else:
-            # Side to move is mated
             score = 0.0 if stm == 0 else 1.0
     elif n >= 190:
-        score = 0.5  # max ply limit
+        score = 0.5
     elif cp > 300:
-        score = 1.0  # Stockfish says white is winning (we played white)
+        score = 1.0
     elif cp < -300:
-        score = 0.0  # Stockfish says black is winning (we played white)
+        score = 0.0
     else:
         score = 0.5
 
-    return score, moves
+    return score, moves, False
 
 
 def estimate_elo(w, d, l, opp):
@@ -184,6 +212,7 @@ def run_match(sf_depth, games=50, movetime=20):
     sf.handshake()
 
     w = d = l = 0
+    illegal = 0
     pgns = []
 
     print(f"\n{'='*60}")
@@ -193,13 +222,16 @@ def run_match(sf_depth, games=50, movetime=20):
 
     for g in range(games):
         if g % 2 == 0:
-            score, moves = play_one_game(our, sf, sf_depth, movetime)
+            score, moves, is_illegal = play_one_game(our, sf, sf_depth, movetime, our_white=True)
         else:
-            # Swap colors: Stockfish plays white, ChessAI plays black
-            inv_score, moves = play_one_game(sf, our, sf_depth, movetime)
+            inv_score, moves, is_illegal = play_one_game(our, sf, sf_depth, movetime, our_white=False)
             score = 1.0 - inv_score
 
-        if score == 1.0:
+        if is_illegal:
+            illegal += 1
+            result_str = "0-1"  # forfeit
+            l += 1
+        elif score == 1.0:
             w += 1
             result_str = "1-0"
         elif score == 0.5:
@@ -210,23 +242,26 @@ def run_match(sf_depth, games=50, movetime=20):
             result_str = "0-1"
 
         pgn = format_pgn(moves, result_str)
-        pgns.append(pgn)
+        pgns.append((pgn, result_str))
+        print(f"\n{pgn}")
 
         total = w + d + l
-        score_pct = (w + d / 2) / total * 100
+        score_pct = (w + d / 2) / total * 100 if total > 0 else 0
         our_elo, err = estimate_elo(w, d, l, sf_elo)
 
+        flag = " ILLEGAL!" if is_illegal else ""
         sys.stdout.write(f"\rGame {g+1:3d}/{games} | "
                         f"W:{w:2d} L:{l:2d} D:{d:2d} | "
-                        f"{score_pct:5.1f}% | ChessAI ≈ {our_elo:5.0f} ± {err:.0f}")
+                        f"{score_pct:5.1f}% | ChessAI ≈ {our_elo:5.0f} ± {err:.0f}"
+                        f"{flag}")
         sys.stdout.flush()
 
     # Save PGNs
     pgn_path = os.path.join(os.path.dirname(__file__), "..", "games.pgn")
     with open(pgn_path, "w") as f:
-        for i, pgn in enumerate(pgns):
+        for i, (pgn, res) in enumerate(pgns):
             f.write(f"[Game \"{i+1}\"]\n")
-            f.write(f"[Result \"{result_str if score == 1.0 else (result_str if score == 0.5 else result_str)}\"]\n")
+            f.write(f"[Result \"{res}\"]\n")
             f.write("\n")
             f.write(pgn + "\n\n")
     print(f"\nPGNs saved to {pgn_path}")
@@ -239,6 +274,8 @@ def run_match(sf_depth, games=50, movetime=20):
     print(f"\n{'-'*60}")
     print(f"Results vs Stockfish depth={sf_depth} (~{sf_elo} Elo):")
     print(f"  +{w} -{l} ={d} | Score: {(w+d/2)/(w+d+l)*100:.1f}%")
+    if illegal:
+        print(f"  Illegal moves by ChessAI: {illegal}")
     print(f"  ChessAI ≈ {our_elo:.0f} ± {err:.0f} Elo")
     print(f"  95% CI: [{our_elo-err*2:.0f}, {our_elo+err*2:.0f}]")
     return our_elo
@@ -249,7 +286,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--depth", type=int, default=4)
     p.add_argument("--games", type=int, default=50)
-    p.add_argument("--movetime", type=int, default=20)
+    p.add_argument("--movetime", type=int, default=1000)
     p.add_argument("--sweep", action="store_true")
     p.add_argument("--quick", action="store_true")
     args = p.parse_args()

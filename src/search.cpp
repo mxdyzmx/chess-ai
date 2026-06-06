@@ -36,7 +36,7 @@ static int lmr_reduction(int depth, int moves_searched) {
 }
 
 // Forward declarations
-static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth);
+static int alpha_beta(SearchContext& ctx, int alpha, int beta, int depth);
 static int quiescence(SearchContext& ctx, int alpha, int beta);
 
 // ============== TranspositionTable ==============
@@ -126,9 +126,14 @@ static int quiescence(SearchContext& ctx, int alpha, int beta) {
             continue;
 
         if (!ctx.board.make_move(m)) continue;
-        if (ctx.board.in_check()) {
-            ctx.board.unmake_move();
-            continue;
+        {
+            Color them = Color(ctx.board.side());
+            Color us = Color(1 - them);
+            uint64_t kbb = ctx.board.king(us);
+            if (kbb && is_attacked(ctx.board, lsb(kbb), them)) {
+                ctx.board.unmake_move();
+                continue;
+            }
         }
 
         int score = -quiescence(ctx, -beta, -alpha);
@@ -143,17 +148,12 @@ static int quiescence(SearchContext& ctx, int alpha, int beta) {
 
 // ============== Alpha-Beta Search ==============
 
-static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
+static int alpha_beta(SearchContext& ctx, int alpha, int beta, int depth) {
     int old_ply = ctx.ply;
     ctx.ply++;
 
     // Stop check
     if (ctx.stop.load()) { ctx.ply--; return 0; }
-
-    // Debug: confirm entry into search
-    if (depth >= 8 && old_ply == 0) {
-        std::cerr << "[search] entering depth " << depth << std::endl;
-    }
 
     // Draw detection
     if (ctx.board.is_draw()) { ctx.ply--; return 0; }
@@ -232,20 +232,54 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
                         tt_move = Move(0);
                 }
             }
-            else if (!tt_move.is_capture()) {
-                // Non-capture, non-castle, non-EP, non-promotion: check no friendly on to-square
-                if (ctx.board.bb_color(side) & sq_bb(to_sq)) {
-                    tt_move = Move(0);
-                }
-                // ALSO check no enemy on to-square (captures must have capture flag set)
-                if (tt_move.data != 0 && (ctx.board.bb_color(enemy) & sq_bb(to_sq))) {
-                    tt_move = Move(0);
-                }
-            }
             else {
-                // Capture (non-EP): check enemy on to-square
-                if (!(ctx.board.bb_color(enemy) & sq_bb(to_sq))) {
+                // General move (non-castle, non-EP, non-promotion):
+                // Validate piece type from move geometry
+                int dr = abs(rank_of(to_sq) - rank_of(from_sq));
+                int df = abs(file_of(to_sq) - file_of(from_sq));
+                PieceType actual_pt = ctx.board.piece_type_on(from_sq);
+                bool valid_type = false;
+
+                if (actual_pt == PT_PAWN) {
+                    // Pawns must move forward: white = increasing rank, black = decreasing rank
+                    int rank_from = rank_of(from_sq);
+                    int rank_to = rank_of(to_sq);
+                    int forward = (side == WHITE) ? 1 : -1;
+                    int dr_raw = rank_to - rank_from;
+                    if (df == 0) {
+                        // Single push or double push
+                        if (dr_raw == forward) valid_type = true;
+                        else if (dr_raw == 2 * forward) {
+                            // Must start from home rank (rank 1 for white, rank 6 for black)
+                            valid_type = (rank_from == (side == WHITE ? 1 : 6));
+                        }
+                    } else if (df == 1 && dr_raw == forward) {
+                        valid_type = true; // Capture
+                    }
+                } else if (actual_pt == PT_KNIGHT) {
+                    valid_type = (dr == 2 && df == 1) || (dr == 1 && df == 2);
+                } else if (actual_pt == PT_BISHOP) {
+                    valid_type = (dr == df && dr > 0);
+                } else if (actual_pt == PT_ROOK) {
+                    valid_type = ((dr == 0) != (df == 0));
+                } else if (actual_pt == PT_QUEEN) {
+                    valid_type = (dr == df && dr > 0) || ((dr == 0) != (df == 0));
+                } else if (actual_pt == PT_KING) {
+                    valid_type = (dr <= 1 && df <= 1 && (dr > 0 || df > 0));
+                }
+
+                if (!valid_type) {
                     tt_move = Move(0);
+                }
+
+                // Also validate capture/non-capture flag against board state
+                if (tt_move.data != 0) {
+                    if (!tt_move.is_capture()) {
+                        if (ctx.board.bb_color(side) & sq_bb(to_sq)) tt_move = Move(0);
+                        if (tt_move.data != 0 && (ctx.board.bb_color(enemy) & sq_bb(to_sq))) tt_move = Move(0);
+                    } else {
+                        if (!(ctx.board.bb_color(enemy) & sq_bb(to_sq))) tt_move = Move(0);
+                    }
                 }
             }
         }
@@ -267,7 +301,7 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
         ctx.board.make_null_move();
 
         int R = 2 + std::min(depth, 8) / 5;
-        int null_score = -alpha_beta_root(ctx, -beta, -beta + 1, depth - R - 1);
+        int null_score = -alpha_beta(ctx, -beta, -beta + 1, depth - R - 1);
 
         ctx.board.unmake_null_move();
 
@@ -344,10 +378,16 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
 
         // Make move
         if (!ctx.board.make_move(m)) continue;
-        // Skip illegal
-        if (ctx.board.in_check()) {
-            ctx.board.unmake_move();
-            continue;
+        // Skip illegal: after make_move, side is flipped to opponent.
+        // Check if the side that just moved left THEIR king in check.
+        {
+            Color them = Color(ctx.board.side());
+            Color us = Color(1 - them);
+            uint64_t kbb = ctx.board.king(us);
+            if (kbb && is_attacked(ctx.board, lsb(kbb), them)) {
+                ctx.board.unmake_move();
+                continue;
+            }
         }
         legal_moves++;
 
@@ -360,7 +400,7 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
         int score;
         if (moves_searched == 0) {
             // First move: full window
-            score = -alpha_beta_root(ctx, -beta, -alpha, depth - 1);
+            score = -alpha_beta(ctx, -beta, -alpha, depth - 1);
         } else {
             // Late Move Reduction
             int reduction = 0;
@@ -370,19 +410,19 @@ static int alpha_beta_root(SearchContext& ctx, int alpha, int beta, int depth) {
 
             // Null window search (possibly reduced)
             if (reduction > 0) {
-                score = -alpha_beta_root(ctx, -alpha - 1, -alpha, depth - 1 - reduction);
+                score = -alpha_beta(ctx, -alpha - 1, -alpha, depth - 1 - reduction);
             } else {
                 score = alpha + 1; // Force full search
             }
 
             // If LMR failed high or no LMR, do full null-window search
             if (score > alpha) {
-                score = -alpha_beta_root(ctx, -alpha - 1, -alpha, depth - 1);
+                score = -alpha_beta(ctx, -alpha - 1, -alpha, depth - 1);
             }
 
             // PVS re-search
             if (score > alpha && score < beta) {
-                score = -alpha_beta_root(ctx, -beta, -alpha, depth - 1);
+                score = -alpha_beta(ctx, -beta, -alpha, depth - 1);
             }
         }
 
@@ -505,7 +545,6 @@ void Search::search() {
     for (int depth = 1; depth <= params_.depth; depth++) {
         if (stop_.load()) break;
 
-        std::cerr << "[search] depth=" << depth << " start" << std::endl;
         ctx.current_depth = depth;
         ctx.ply = 0;
         ctx.nodes = 0;
@@ -518,13 +557,13 @@ void Search::search() {
         alpha = -TT_MATE_SCORE;
         beta  = TT_MATE_SCORE;
 
-        int score = alpha_beta_root(ctx, alpha, beta, depth);
+        int score = alpha_beta(ctx, alpha, beta, depth);
 
         // Aspiration fail-low: re-search with full window
         if (score <= alpha || score >= beta) {
             alpha = -TT_MATE_SCORE;
             beta = TT_MATE_SCORE;
-            score = alpha_beta_root(ctx, alpha, beta, depth);
+            score = alpha_beta(ctx, alpha, beta, depth);
         }
 
         prev_estimate_ = score;
@@ -592,6 +631,35 @@ void Search::search() {
 
     stats_.total_time_ms = get_time_ms() - start_time_;
 
+    // Signal search is done BEFORE outputting bestmove,
+    // so the next "position" command does not get dropped.
+    searching_.store(false);
+
+    // Final legality check: verify best_move_ on a fresh board from saved_fen.
+    // This avoids any board corruption from unbalanced make/unmake during search.
+    if (best_move_.data != 0) {
+        bool legal = false;
+        Board check_board;
+        check_board.set_fen(saved_fen);
+        int f = best_move_.from();
+        if (check_board.bb_color(check_board.side()) & sq_bb(f)) {
+            legal = check_board.make_move(best_move_);
+            if (legal) {
+                Color them = Color(check_board.side());
+                Color us = Color(1 - them);
+                uint64_t kbb = check_board.king(us);
+                if (kbb && is_attacked(check_board, lsb(kbb), them))
+                    legal = false;
+                check_board.unmake_move();
+            }
+        }
+        if (!legal) {
+            std::cerr << "[search] WARNING: best move " << best_move_.data
+                      << " is illegal, sending (none)" << std::endl;
+            best_move_ = Move(0);
+        }
+    }
+
     // Output best move
     if (best_move_.data != 0) {
         int f = best_move_.from(), t = best_move_.to();
@@ -605,8 +673,6 @@ void Search::search() {
         std::cout << std::endl;
         std::cout.flush();  // ensure pipe gets the bestmove immediately
     }
-
-    searching_.store(false);
 }
 
 bool Search::time_over() {

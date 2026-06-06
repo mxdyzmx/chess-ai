@@ -573,10 +573,11 @@ void generate_captures(const Board& board, MoveList& list) {
                 list.add(Move::make(from, to, 4));
             }
         }
-        // En passant
+        // En passant (must guard file boundaries to prevent wrap-around)
         if (ep_sq >= 0) {
-            if (pawns & sq_bb(ep_sq - 7)) list.add(Move::make(ep_sq - 7, ep_sq, 5));
-            if (pawns & sq_bb(ep_sq - 9)) list.add(Move::make(ep_sq - 9, ep_sq, 5));
+            int ep_file = file_of(ep_sq);
+            if (ep_file > 0 && (pawns & sq_bb(ep_sq - 7))) list.add(Move::make(ep_sq - 7, ep_sq, 5));
+            if (ep_file < 7 && (pawns & sq_bb(ep_sq - 9))) list.add(Move::make(ep_sq - 9, ep_sq, 5));
         }
     } else {
         uint64_t cap = ((pawns & ~FILE_H_BB) >> 7) & their_pieces;
@@ -601,9 +602,11 @@ void generate_captures(const Board& board, MoveList& list) {
                 list.add(Move::make(from, to, 4));
             }
         }
+        // En passant (must guard file boundaries)
         if (ep_sq >= 0) {
-            if (pawns & sq_bb(ep_sq + 7)) list.add(Move::make(ep_sq + 7, ep_sq, 5));
-            if (pawns & sq_bb(ep_sq + 9)) list.add(Move::make(ep_sq + 9, ep_sq, 5));
+            int ep_file = file_of(ep_sq);
+            if (ep_file > 0 && (pawns & sq_bb(ep_sq + 7))) list.add(Move::make(ep_sq + 7, ep_sq, 5));
+            if (ep_file < 7 && (pawns & sq_bb(ep_sq + 9))) list.add(Move::make(ep_sq + 9, ep_sq, 5));
         }
     }
 
@@ -646,20 +649,14 @@ void generate_captures(const Board& board, MoveList& list) {
     }
 }
 
-// Static exchange evaluation
-int see(const Board& board, Move move) {
-    // Simplified SEE: return 0 for non-captures, piece value for captures
-    if (!move.is_capture()) return 0;
-    // Just return a basic estimate for now
-    return 100; // A simplified value
-}
-
 // Ordering score for a move
 int move_score(const Board& board, Move move, int ply) {
     if (move.is_capture()) {
         // MVV-LVA: high victim value, low attacker value
+        // EP capture: victim will be PT_NONE (6), clamp to 0
         PieceType victim = board.piece_type_on(move.to());
-        return 1000 + (victim * 10); // Simplification
+        int v = (victim >= PT_PAWN && victim <= PT_KING) ? (int)victim : 0;
+        return 1000 + (v * 10);
     }
     if (move.is_promotion()) {
         return 900 + move.promotion_type();

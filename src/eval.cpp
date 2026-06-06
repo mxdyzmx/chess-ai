@@ -56,17 +56,8 @@ static int count_isolated_pawns(uint64_t pawns_bb) {
     while (temp) {
         int sq = lsb(temp);
         temp &= temp - 1;
-        uint64_t pawn = sq_bb(sq);
-        uint64_t left_file = (file_of(sq) > 0) ? (pawn >> 1) : 0;
-        uint64_t right_file = (file_of(sq) < 7) ? (pawn << 1) : 0;
 
         // Check if any friendly pawns on adjacent files
-        bool left_has = (pawns_bb & ((FILE_A << (file_of(sq) - 1)) & ~0ULL)) &&
-                        (file_of(sq) > 0);
-        bool right_has = (pawns_bb & ((FILE_A << (file_of(sq) + 1)) & ~0ULL)) &&
-                         (file_of(sq) < 7);
-
-        // More precise: check each file
         if (file_of(sq) > 0) {
             uint64_t left_mask = FILE_A << (file_of(sq) - 1);
             if (pawns_bb & left_mask) continue; // Not isolated
@@ -157,10 +148,10 @@ void extract_features(const Board& board, float* features) {
         }
     }
 
-    // Mobility (384)
+    // Mobility (384) — must match evaluate() which uses int min(list.size/50, 1)
     MoveList list;
     generate_moves(board, list);
-    float mobility = std::min((float)list.size / 50.0f, 1.0f);
+    float mobility = (float)std::min(list.size / 50, 1);
     features[384] = mobility;
 
     // Pawn structure features (385-388)

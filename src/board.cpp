@@ -303,6 +303,14 @@ bool Board::make_move(Move m) {
         stack_size_--; // undo the save
         return false;
     }
+    // Verify piece color on from-square matches moving side
+    if (color_on(from) != side_) {
+        std::cerr << "ERROR: make_move: color mismatch: from=" << from << " side=" << side_
+                  << " color_on_from=" << color_on(from)
+                  << " fen=" << fen() << std::endl;
+        stack_size_--; // undo the save
+        return false;
+    }
     Color us = side_;
     Color them = Color(1 - us);
     bool is_capture = m.is_capture();
@@ -474,6 +482,18 @@ void Board::unmake_move() {
 }
 
 void Board::make_null_move() {
+    // Save state to stack for consistency with normal move stack
+    if (stack_size_ < MAX_GAME_PLY) {
+        stack_hash_[stack_size_] = hash_;
+        stack_ep_[stack_size_] = ep_sq_;
+        stack_castle_[stack_size_] = castle_;
+        stack_halfmove_[stack_size_] = halfmove_;
+        stack_move_[stack_size_] = 0; // null move marker
+        stack_captured_[stack_size_] = PT_NONE;
+        stack_piece_pt_[stack_size_] = PT_NONE;
+    }
+    stack_size_++;
+
     // Clear EP square — it's only valid for one turn
     if (ep_sq_ >= 0) {
         hash_ ^= zobrist_ep_[ep_sq_];
@@ -484,9 +504,16 @@ void Board::make_null_move() {
 }
 
 void Board::unmake_null_move() {
+    stack_size_--;
+    if (stack_size_ < 0) return;
+
+    // Restore state from stack
+    hash_ = stack_hash_[stack_size_];
+    ep_sq_ = stack_ep_[stack_size_];
+    castle_ = stack_castle_[stack_size_];
+    halfmove_ = stack_halfmove_[stack_size_];
+
     side_ = Color(1 - side_);
-    hash_ ^= zobrist_side_;
-    // EP stays cleared — the null move skipped the other side's turn
 }
 
 bool is_attacked(const Board& board, int sq, Color attacker) {
@@ -518,12 +545,6 @@ bool is_attacked(const Board& board, int sq, Color attacker) {
     }
 
     return false;
-}
-
-bool is_legal_move(const Board& board, Move move) {
-    // This is a simplified legal check: copy, make, verify
-    // For performance, the search should use Board::make_move and check in_check
-    return true;
 }
 
 bool Board::verify_integrity(std::string* out) const {

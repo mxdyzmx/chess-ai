@@ -106,7 +106,7 @@ void UCI::loop() {
 
 void UCI::cmd_uci() {
     std::cout << "id name ChessAI 1.0" << std::endl;
-    std::cout << "id author ChessAI" << std::endl;
+    std::cout << "id author mxdyzmx" << std::endl;
     std::cout << "option name Hash type spin default 256 min 1 max 4096" << std::endl;
     std::cout << "uciok" << std::endl;
 }
@@ -130,6 +130,7 @@ void UCI::cmd_ucinewgame() {
 }
 
 void UCI::cmd_position(const std::string& input) {
+    if (search_.is_searching()) return; // Can't change position during search
     std::istringstream ss(input);
     std::string token;
     ss >> token;
@@ -141,7 +142,7 @@ void UCI::cmd_position(const std::string& input) {
             std::string move_str;
             while (ss >> move_str) {
                 Move m = parse_move(move_str);
-                if (m.data != 0) board_.make_move(m);
+                if (m.data != 0 && !board_.make_move(m)) break;
             }
         }
     } else if (token == "fen") {
@@ -159,13 +160,14 @@ void UCI::cmd_position(const std::string& input) {
             std::string move_str;
             while (ss >> move_str) {
                 Move m = parse_move(move_str);
-                if (m.data != 0) board_.make_move(m);
+                if (m.data != 0 && !board_.make_move(m)) break;
             }
         }
     }
 }
 
 void UCI::cmd_go(const std::string& input) {
+    if (search_.is_searching()) return; // Already searching
     SearchParams params;
     std::istringstream ss(input);
     std::string token;
@@ -236,8 +238,11 @@ Move UCI::parse_move(const std::string& str) {
 
     // Determine move type
     PieceType pt = board_.piece_type_on(from);
+    if (pt == PT_NONE) return Move(0);  // No piece on from-square
+
     bool is_capture = board_.piece_type_on(to) != PT_NONE;
-    bool is_ep = (pt == PT_PAWN && to == board_.ep_square());
+    bool is_ep = (pt == PT_PAWN && to == board_.ep_square() &&
+                  board_.ep_square() >= 0);
 
     // Check for promotion
     if (str.length() >= 5) {
@@ -253,22 +258,27 @@ Move UCI::parse_move(const std::string& str) {
             if (is_capture) flags += 4; // 12-15 for capture promo
             return Move::make(from, to, flags);
         }
+        return Move(0); // 5-char string but no valid promo piece
     }
 
-    // Check for castling
+    // Check for castling: king must be on its home square and rights must exist
     if (pt == PT_KING && abs(to - from) == 2) {
-        int flags = (to > from) ? 2 : 3; // kingside = 2, queenside = 3
-        return Move::make(from, to, flags);
+        int king_home = board_.is_white_to_move() ? 4 : 60;
+        if (from == king_home) {
+            int flags = (to > from) ? 2 : 3; // kingside = 2, queenside = 3
+            return Move::make(from, to, flags);
+        }
+        // King moved 2 squares but not from home square — treat as quiet move
     }
 
     // Normal move or capture or en-passant
     int flags = 0;
-    if (is_ep) flags = 5;
-    else if (is_capture) flags = 4;
-
-    // Check for double pawn push
     if (pt == PT_PAWN && abs(to - from) == 16) {
-        flags = 1;
+        flags = 1;  // Double push
+    } else if (is_ep) {
+        flags = 5;  // En passant
+    } else if (is_capture) {
+        flags = 4;  // Normal capture
     }
 
     return Move::make(from, to, flags);
